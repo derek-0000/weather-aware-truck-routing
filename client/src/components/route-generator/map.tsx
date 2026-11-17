@@ -7,7 +7,15 @@ import {
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
-import { useEffect } from "react";
+import { format } from "date-fns";
+import {
+  ClockIcon,
+  CloudRainIcon,
+  SnowflakeIcon,
+  WindIcon,
+} from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import type { Route } from "@/lib/routes";
 import { INITIAL_CENTER, INITIAL_ZOOM, ROUTE_COLORS } from "./constants";
@@ -76,8 +84,149 @@ function createWeatherPointIcon(color: string): google.maps.Icon {
   };
 }
 
-function WeatherPointDots({ routes }: { routes: Route[] }) {
+type WeatherPoint = Route["weatherPoints"][number];
+type PointSelection = { routes: Route[]; routeIndex: number; pointIndex: number };
+
+const POPOVER_EDGE_PADDING = 8;
+const POPOVER_POINT_GAP = 12;
+
+function MapPopover({
+  position,
+  children,
+}: {
+  position: google.maps.LatLngLiteral;
+  children: ReactNode;
+}) {
   const map = useMap();
+  const [container] = useState(() => {
+    const element = document.createElement("div");
+    element.style.position = "absolute";
+    element.style.visibility = "hidden";
+    return element;
+  });
+  const { lat, lng } = position;
+
+  useEffect(() => {
+    if (!map) return;
+    google.maps.OverlayView.preventMapHitsAndGesturesFrom(container);
+    const overlay = new google.maps.OverlayView();
+    overlay.onAdd = () => overlay.getPanes()?.floatPane.appendChild(container);
+    overlay.onRemove = () => container.remove();
+    overlay.draw = () => {
+      const projection = overlay.getProjection();
+      const anchor = projection.fromLatLngToDivPixel({ lat, lng });
+      const viewport = projection.fromLatLngToContainerPixel({ lat, lng });
+      if (!anchor || !viewport) return;
+      container.style.left = `${anchor.x}px`;
+      container.style.top = `${anchor.y}px`;
+
+      const card = container.firstElementChild;
+      if (!(card instanceof HTMLElement)) return;
+      const mapDiv = map.getDiv();
+      const half = card.offsetWidth / 2;
+      const minX = POPOVER_EDGE_PADDING + half;
+      const maxX = mapDiv.clientWidth - POPOVER_EDGE_PADDING - half;
+      const shift = Math.min(Math.max(viewport.x, minX), Math.max(minX, maxX)) - viewport.x;
+      const below =
+        viewport.y - card.offsetHeight - POPOVER_POINT_GAP < POPOVER_EDGE_PADDING;
+      card.style.transform = `translate(calc(-50% + ${shift}px), ${
+        below ? `${POPOVER_POINT_GAP}px` : `calc(-100% - ${POPOVER_POINT_GAP}px)`
+      })`;
+      container.style.visibility = "visible";
+    };
+    overlay.setMap(map);
+    return () => overlay.setMap(null);
+  }, [map, container, lat, lng]);
+
+  return createPortal(children, container);
+}
+
+const etaFormat = "EEE, MMM d · h:mm a";
+
+function formatRate(value: number) {
+  return value === 0 ? "None" : `${value < 0.01 ? "<0.01" : value.toFixed(2)} in/h`;
+}
+
+function WeatherPointCard({
+  point,
+  routeIndex,
+  pointIndex,
+  pointCount,
+  color,
+}: {
+  point: WeatherPoint;
+  routeIndex: number;
+  pointIndex: number;
+  pointCount: number;
+  color: string;
+}) {
+  const { eta, forecastTime, windMph, rainInph, snowInph } = point.weather;
+  const label =
+    pointIndex === 0
+      ? "Start"
+      : pointIndex === pointCount - 1
+        ? "Destination"
+        : `Checkpoint ${pointIndex} of ${pointCount - 2}`;
+  const rows = [
+    { icon: WindIcon, label: "Wind", value: `${windMph.toFixed(1)} mph` },
+    { icon: CloudRainIcon, label: "Rain", value: formatRate(rainInph) },
+    { icon: SnowflakeIcon, label: "Snow", value: formatRate(snowInph) },
+  ];
+
+  return (
+    <div
+      role="tooltip"
+      className="absolute left-0 w-56 rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10"
+    >
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className="size-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: color }}
+        />
+        <p className="font-medium">
+          {label}
+          <span className="font-normal text-muted-foreground">
+            {" "}
+            · Route {routeIndex + 1}
+          </span>
+        </p>
+      </div>
+      <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <ClockIcon aria-hidden className="size-3.5" />
+        <span>
+          ETA <time dateTime={eta}>{format(new Date(eta), etaFormat)}</time>
+        </span>
+      </p>
+      <dl className="mt-3 space-y-1.5">
+        {rows.map(({ icon: Icon, label, value }) => (
+          <div key={label} className="flex items-center justify-between gap-3">
+            <dt className="flex items-center gap-2 text-muted-foreground">
+              <Icon aria-hidden className="size-4" />
+              {label}
+            </dt>
+            <dd className="font-medium tabular-nums">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3 border-t border-border pt-2 text-xs text-muted-foreground">
+        Forecast for{" "}
+        <time dateTime={forecastTime}>
+          {format(new Date(forecastTime), "h:mm a")}
+        </time>
+      </p>
+    </div>
+  );
+}
+
+function WeatherPoints({ routes }: { routes: Route[] }) {
+  const map = useMap();
+  const [hovered, setHovered] = useState<PointSelection | null>(null);
+  const [pinned, setPinned] = useState<PointSelection | null>(null);
+  const pinnedRef = useRef(pinned);
+  useEffect(() => {
+    pinnedRef.current = pinned;
+  }, [pinned]);
 
   useEffect(() => {
     if (!map) return;
@@ -89,23 +238,64 @@ function WeatherPointDots({ routes }: { routes: Route[] }) {
         icon = createWeatherPointIcon(color);
         icons.set(color, icon);
       }
-      return route.weatherPoints.map(
-        (point, pointIndex) =>
-          new google.maps.Marker({
-            map,
-            position: { lat: point.latitude, lng: point.longitude },
-            icon,
-            optimized: true,
-            clickable: false,
-            title: `Route ${routeIndex + 1}, weather point ${pointIndex + 1}`,
-            zIndex: routes.length - routeIndex,
-          }),
-      );
+      return route.weatherPoints.map((point, pointIndex) => {
+        const marker = new google.maps.Marker({
+          map,
+          position: { lat: point.latitude, lng: point.longitude },
+          icon,
+          optimized: true,
+          cursor: "pointer",
+          zIndex: routes.length - routeIndex,
+        });
+        const selection = { routes, routeIndex, pointIndex };
+        marker.addListener("mouseover", () => setHovered(selection));
+        marker.addListener("mouseout", () => setHovered(null));
+        marker.addListener("click", () => {
+          const isPinned =
+            pinnedRef.current?.routes === routes &&
+            pinnedRef.current.routeIndex === routeIndex &&
+            pinnedRef.current.pointIndex === pointIndex;
+          setPinned(isPinned ? null : selection);
+          setHovered(isPinned ? null : selection);
+        });
+        return marker;
+      });
     });
-    return () => markers.forEach((marker) => marker.setMap(null));
+    const close = () => {
+      setPinned(null);
+      setHovered(null);
+    };
+    const mapClick = map.addListener("click", close);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      markers.forEach((marker) => {
+        google.maps.event.clearInstanceListeners(marker);
+        marker.setMap(null);
+      });
+      mapClick.remove();
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [map, routes]);
 
-  return null;
+  const active = [pinned, hovered].find((selection) => selection?.routes === routes);
+  const route = active ? routes[active.routeIndex] : undefined;
+  const point = active ? route?.weatherPoints[active.pointIndex] : undefined;
+  if (!active || !route || !point) return null;
+
+  return (
+    <MapPopover position={{ lat: point.latitude, lng: point.longitude }}>
+      <WeatherPointCard
+        point={point}
+        routeIndex={active.routeIndex}
+        pointIndex={active.pointIndex}
+        pointCount={route.weatherPoints.length}
+        color={ROUTE_COLORS[active.routeIndex % ROUTE_COLORS.length]}
+      />
+    </MapPopover>
+  );
 }
 
 function MapContent() {
@@ -169,7 +359,7 @@ function MapContent() {
       fullscreenControl={false}
     >
       <RoutePolylines routes={routes} />
-      <WeatherPointDots routes={routes} />
+      <WeatherPoints routes={routes} />
       <MapControl position={ControlPosition.TOP_RIGHT}>
         <ResetView />
       </MapControl>

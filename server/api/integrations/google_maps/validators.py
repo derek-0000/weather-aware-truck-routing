@@ -26,6 +26,12 @@ class WeatherCheck(Enum):
         miles = {WeatherCheck.LAX: 50, WeatherCheck.NORMAL: 25, WeatherCheck.STRICT: 10}
         return miles[self] * 1609.344
 
+    @property
+    def fallbacks(self) -> list["WeatherCheck"]:
+        """This level followed by each sparser level, ending with lax."""
+        levels = list(WeatherCheck)
+        return levels[levels.index(self)::-1]
+
 
 @dataclass(frozen=True)
 class RoutesRequest:

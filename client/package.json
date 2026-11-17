@@ -7,8 +7,6 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test tests/routes.test.mjs",
-    "test:e2e": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -30,7 +28,6 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
-    "@playwright/test": "^1.65.1",
     "@rolldown/plugin-babel": "^0.3.0",
     "@types/babel__core": "^7.20.5",
     "@types/google.maps": "^3.66.10",

@@ -157,7 +157,6 @@ export function RouteGeneratorForm() {
   );
 }
 
-// Delay only applies while opening; closing fades everything out together.
 function Reveal({
   delay,
   className,

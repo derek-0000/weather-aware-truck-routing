@@ -7,11 +7,20 @@ import { createInitialRouteGeneratorState, routeGeneratorReducer, type RouteGene
 
 const EMPTY_ROUTES: Route[] = []
 
+function parseDepartureTime(date: Date | undefined, time: string): Date | null {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time)
+  if (!date || !match) return null
+  const departure = new Date(date)
+  departure.setHours(Number(match[1]), Number(match[2]), 0, 0)
+  return Number.isFinite(departure.getTime()) ? departure : null
+}
+
 export function RouteGeneratorContext({ children }: { children: ReactNode }) {
   const [state, reducerDispatch] = useReducer(routeGeneratorReducer, undefined, createInitialRouteGeneratorState)
   const mutation = useMutation({ mutationFn: requestRoutes, retry: false })
   const { mutate, reset, isPending } = mutation
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim()
+  const departureTime = parseDepartureTime(state.departureDate, state.departureTime)
 
   function dispatch(action: RouteGeneratorAction) {
     reset()
@@ -20,7 +29,9 @@ export function RouteGeneratorContext({ children }: { children: ReactNode }) {
 
   function submit() {
     const { origin, destination } = state.form
-    if (origin && destination && !isPending) mutate({ origin, destination, weatherCheck: state.weatherCheck })
+    if (origin && destination && departureTime && !isPending) {
+      mutate({ origin, destination, weatherCheck: state.weatherCheck, departureTime })
+    }
   }
 
   const value: RouteGeneratorContextValue = {
@@ -32,7 +43,7 @@ export function RouteGeneratorContext({ children }: { children: ReactNode }) {
     dispatch,
     mutation,
     routes: mutation.data ?? EMPTY_ROUTES,
-    canSubmit: Boolean(apiKey && state.form.origin && state.form.destination && !isPending),
+    canSubmit: Boolean(apiKey && state.form.origin && state.form.destination && departureTime && !isPending),
     submit,
     mapsConfigured: Boolean(apiKey),
   }

@@ -1,67 +1,40 @@
 import type { WeatherCheck } from '@/components/route-generator/constants'
+import { fetchRouteWeather, type Coordinates, type Weather } from "./weather";
 
 export type RouteRequest = {
   origin: google.maps.places.Place
   destination: google.maps.places.Place
   weatherCheck: WeatherCheck
+  departureTime: Date
 }
 
-function parseWeatherPoint(value: unknown) {
-  if (
-    typeof value !== 'object' || value === null ||
-    !('latitude' in value) || typeof value.latitude !== 'number' ||
-    !Number.isFinite(value.latitude) || Math.abs(value.latitude) > 90 ||
-    !('longitude' in value) || typeof value.longitude !== 'number' ||
-    !Number.isFinite(value.longitude) || Math.abs(value.longitude) > 180
-  ) {
-    throw new Error('The route service returned an invalid weather point.')
-  }
-  return { latitude: value.latitude, longitude: value.longitude }
-}
+export type WeatherPoint = Coordinates & { weather: Weather };
 
-function parseRoute(value: unknown) {
-  if (typeof value !== 'object' || value === null) {
-    throw new Error('The route service returned an invalid route.')
-  }
-  const distance = 'distanceMeters' in value ? value.distanceMeters : 0
-  if (
-    typeof distance !== 'number' || !Number.isSafeInteger(distance) || distance < 0 ||
-    !('duration' in value) || typeof value.duration !== 'string' ||
-    !/^\d+(?:\.\d{1,9})?s$/.test(value.duration) ||
-    !('polyline' in value) || typeof value.polyline !== 'object' || value.polyline === null ||
-    !('encodedPolyline' in value.polyline) || typeof value.polyline.encodedPolyline !== 'string' ||
-    !/^[?-~]*$/.test(value.polyline.encodedPolyline)
-  ) {
-    throw new Error('The route service returned an invalid route.')
-  }
-  const durationSeconds = Number(value.duration.slice(0, -1))
-  if (!Number.isFinite(durationSeconds)) {
-    throw new Error('The route service returned an invalid duration.')
-  }
-  if (!('weather_points' in value) || !Array.isArray(value.weather_points) || value.weather_points.length === 0) {
-    throw new Error('The route service returned invalid weather points.')
-  }
-  return {
-    distanceMeters: distance,
-    durationSeconds,
-    encodedPolyline: value.polyline.encodedPolyline,
-    weatherPoints: value.weather_points.map((point: unknown) => parseWeatherPoint(point)),
-  }
-}
+export type Route = {
+  distanceMeters: number;
+  durationSeconds: number;
+  encodedPolyline: string;
+  weatherPoints: WeatherPoint[];
+};
 
-export type Route = ReturnType<typeof parseRoute>
+type RouteGeometry = Omit<Route, "weatherPoints"> & {
+  weatherPoints: Coordinates[];
+};
 
-export function parseRoutesResponse(value: unknown): Route[] {
-  if (
-    typeof value !== 'object' || value === null ||
-    !('routes' in value) || !Array.isArray(value.routes)
-  ) {
-    throw new Error('The route service returned an invalid response.')
-  }
-  return value.routes.map((route: unknown) => parseRoute(route))
-}
+type RoutesResponse = {
+  routes: {
+    distanceMeters: number;
+    durationSeconds: number;
+    polyline: { encodedPolyline: string };
+    weather_points: Coordinates[];
+  }[];
+};
 
-export async function requestRoutes({ origin, destination, weatherCheck }: RouteRequest): Promise<Route[]> {
+async function requestRouteGeometries({
+  origin,
+  destination,
+  weatherCheck,
+}: RouteRequest): Promise<RouteGeometry[]> {
   await Promise.all([
     origin.fetchFields({ fields: ['location'] }),
     destination.fetchFields({ fields: ['location'] }),
@@ -86,12 +59,14 @@ export async function requestRoutes({ origin, destination, weatherCheck }: Route
   } catch {
     throw new Error('Unable to load routes. Please try again.')
   }
+
   let payload: unknown
   try {
     payload = await response.json()
   } catch {
     throw new Error('The route service returned an unreadable response. Please try again.')
   }
+
   if (!response.ok) {
     const message = typeof payload === 'object' && payload !== null &&
       'error' in payload && typeof payload.error === 'string'
@@ -99,5 +74,28 @@ export async function requestRoutes({ origin, destination, weatherCheck }: Route
       : 'Unable to load routes. Please try again.'
     throw new Error(message)
   }
-  return parseRoutesResponse(payload)
+  return (payload as RoutesResponse).routes.map((route) => ({
+    distanceMeters: route.distanceMeters,
+    durationSeconds: route.durationSeconds,
+    encodedPolyline: route.polyline.encodedPolyline,
+    weatherPoints: route.weather_points,
+  }))
+}
+
+export async function requestRoutes(request: RouteRequest): Promise<Route[]> {
+  const routes = await requestRouteGeometries(request);
+  const weather = await fetchRouteWeather(
+    routes.map(({ weatherPoints, durationSeconds }) => ({
+      points: weatherPoints,
+      durationSeconds,
+    })),
+    request.departureTime,
+  );
+  return routes.map((route, routeIndex) => ({
+    ...route,
+    weatherPoints: route.weatherPoints.map((point, pointIndex) => ({
+      ...point,
+      weather: weather[routeIndex][pointIndex],
+    })),
+  }));
 }
