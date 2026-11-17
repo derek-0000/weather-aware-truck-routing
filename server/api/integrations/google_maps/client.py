@@ -3,7 +3,8 @@ import re
 import requests
 
 from .builders import ROUTES_API_URL, build_routes_body, build_routes_headers
-from .validators import RoutesRequest
+from .geometry import collect_weather_points
+from .validators import RoutesRequest, WeatherCheck
 
 
 class GoogleRoutesError(Exception):
@@ -12,7 +13,7 @@ class GoogleRoutesError(Exception):
         self.status_code = status_code
 
 
-def _parse_response(payload: object) -> dict[str, object]:
+def _parse_response(payload: object, weather_check: WeatherCheck) -> dict[str, object]:
     if not isinstance(payload, dict) or "error" in payload:
         raise GoogleRoutesError("Google Routes returned an invalid response.")
     routes = payload.get("routes", [])
@@ -34,6 +35,14 @@ def _parse_response(payload: object) -> dict[str, object]:
             or not isinstance(polyline.get("encodedPolyline"), str)
         ):
             raise GoogleRoutesError("Google Routes returned an invalid route.")
+        try:
+            points = collect_weather_points(polyline["encodedPolyline"], weather_check)
+        except ValueError as exc:
+            raise GoogleRoutesError("Google Routes returned an invalid polyline.") from exc
+        route["weather_points"] = [
+            {"latitude": point.latitude, "longitude": point.longitude}
+            for point in points
+        ]
     return {"routes": routes}
 
 
@@ -59,4 +68,4 @@ def compute_routes(route: RoutesRequest, api_key: str) -> dict[str, object]:
         payload: object = response.json()
     except ValueError as exc:
         raise GoogleRoutesError("Google Routes returned invalid JSON.") from exc
-    return _parse_response(payload)
+    return _parse_response(payload, route.weather_check)

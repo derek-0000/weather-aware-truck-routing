@@ -20,7 +20,7 @@ export function RouteGeneratorContext({ children }: { children: ReactNode }) {
 
   function submit() {
     const { origin, destination } = state.form
-    if (origin && destination && !isPending) mutate({ origin, destination })
+    if (origin && destination && !isPending) mutate({ origin, destination, weatherCheck: state.weatherCheck })
   }
 
   const value: RouteGeneratorContextValue = {

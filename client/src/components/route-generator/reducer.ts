@@ -2,7 +2,7 @@ import type { RouteRequest } from '@/lib/routes'
 import type { WeatherCheck } from './constants'
 
 export type RouteGeneratorState = {
-  form: { [Field in keyof RouteRequest]: RouteRequest[Field] | null }
+  form: { [Field in keyof Pick<RouteRequest, 'origin' | 'destination'>]: RouteRequest[Field] | null }
   departureDate: Date | undefined
   departureTime: string
   loadWeightLbs: string

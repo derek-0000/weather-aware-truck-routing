@@ -54,6 +54,60 @@ function RoutePolylines({ routes }: { routes: Route[] }) {
   return null;
 }
 
+function createWeatherPointIcon(color: string): google.maps.Icon {
+  const size = 14;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size * 2;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Unable to draw weather point icons.");
+  context.scale(2, 2);
+  context.beginPath();
+  context.arc(size / 2, size / 2, 5, 0, Math.PI * 2);
+  context.fillStyle = color;
+  context.fill();
+  context.strokeStyle = "#ffffff";
+  context.lineWidth = 2;
+  context.stroke();
+  return {
+    url: canvas.toDataURL("image/png"),
+    size: new google.maps.Size(canvas.width, canvas.height),
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(size / 2, size / 2),
+  };
+}
+
+function WeatherPointDots({ routes }: { routes: Route[] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+    const icons = new globalThis.Map<string, google.maps.Icon>();
+    const markers = routes.flatMap((route, routeIndex) => {
+      const color = ROUTE_COLORS[routeIndex % ROUTE_COLORS.length];
+      let icon = icons.get(color);
+      if (!icon) {
+        icon = createWeatherPointIcon(color);
+        icons.set(color, icon);
+      }
+      return route.weatherPoints.map(
+        (point, pointIndex) =>
+          new google.maps.Marker({
+            map,
+            position: { lat: point.latitude, lng: point.longitude },
+            icon,
+            optimized: true,
+            clickable: false,
+            title: `Route ${routeIndex + 1}, weather point ${pointIndex + 1}`,
+            zIndex: routes.length - routeIndex,
+          }),
+      );
+    });
+    return () => markers.forEach((marker) => marker.setMap(null));
+  }, [map, routes]);
+
+  return null;
+}
+
 function MapContent() {
   const { routes, mapsConfigured } = useRouteGenerator();
   const status = useApiLoadingStatus();
@@ -115,6 +169,7 @@ function MapContent() {
       fullscreenControl={false}
     >
       <RoutePolylines routes={routes} />
+      <WeatherPointDots routes={routes} />
       <MapControl position={ControlPosition.TOP_RIGHT}>
         <ResetView />
       </MapControl>

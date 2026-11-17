@@ -1,16 +1,20 @@
 # Google Routes integration
 
-`POST /api/get_routes` accepts JSON with two coordinates:
+`POST /api/get_routes` accepts JSON with two coordinates and a weather check level:
 
 ```json
 {
   "origin": {"latitude": 28.6353, "longitude": -106.0889},
-  "destination": {"latitude": 31.6904, "longitude": -106.4245}
+  "destination": {"latitude": 31.6904, "longitude": -106.4245},
+  "weather_check": "lax"
 }
 ```
 
 Latitude must be a finite number between -90 and 90. Longitude must be a finite
 number between -180 and 180. Strings, booleans, missing values, and null are rejected.
+`weather_check` accepts `lax` for every 50 miles, `normal` for every 25 miles,
+or `strict` for every 10 miles. Omitting it defaults to `lax`; invalid values
+return `400` before calling Google.
 Send `Content-Type: application/json`. This stateless endpoint is CSRF-exempt
 and does not require a CSRF cookie or token. The Vite development server proxies
 `/api` requests to Django on port 8000.
@@ -48,11 +52,29 @@ three routes, or no routes. A successful response has the form:
     {
       "distanceMeters": 360000,
       "duration": "14400s",
-      "polyline": {"encodedPolyline": "..."}
+      "polyline": {"encodedPolyline": "..."},
+      "weather_points": [
+        {"latitude": 28.6353, "longitude": -106.0889},
+        {"latitude": 29.359, "longitude": -106.168},
+        {"latitude": 30.083, "longitude": -106.248},
+        {"latitude": 30.807, "longitude": -106.328},
+        {"latitude": 31.531, "longitude": -106.407},
+        {"latitude": 31.6904, "longitude": -106.4245}
+      ]
     }
   ]
 }
 ```
+
+The coordinates above illustrate the response shape. Each route's E5 encoded
+polyline is decoded independently. Haversine distances are accumulated along
+the path, and points are interpolated along the segment's great circle at each
+interval. Distances use the decoded path rather than Google's `distanceMeters`.
+The route's start and end coordinates are always included, even for trips shorter
+than one interval. A destination that falls on an interval appears only once;
+a zero-length route needs only one coordinate. For an exactly 200-mile route,
+`lax` returns five points at 0, 50, 100, 150, and 200 miles. These are collection
+locations for weather checks; this endpoint does not fetch weather forecasts.
 
 No route found returns `200` with `{"routes": []}`. Invalid input returns `400`,
 unsupported content type `415`, missing server key `503`, Google timeout `504`,
@@ -62,7 +84,8 @@ Unsupported HTTP methods return Django's `405` response.
 
 `validators.py` parses incoming JSON into coordinate/request dataclasses.
 `builders.py` builds Google headers and body. `client.py` owns the HTTP call,
-timeouts, errors, and response validation. The view only connects these pieces
+timeouts, errors, and response validation. `geometry.py` decodes polylines and
+collects weather points. The view only connects these pieces
 to Django's request and JSON response.
 
 Run the endpoint tests without a database or live Google calls:

@@ -1,6 +1,7 @@
 import json
 import math
 from dataclasses import dataclass
+from enum import Enum
 
 
 class RequestValidationError(ValueError):
@@ -15,10 +16,22 @@ class Coordinates:
     longitude: float
 
 
+class WeatherCheck(Enum):
+    LAX = "lax"
+    NORMAL = "normal"
+    STRICT = "strict"
+
+    @property
+    def interval_meters(self) -> float:
+        miles = {WeatherCheck.LAX: 50, WeatherCheck.NORMAL: 25, WeatherCheck.STRICT: 10}
+        return miles[self] * 1609.344
+
+
 @dataclass(frozen=True)
 class RoutesRequest:
     origin: Coordinates
     destination: Coordinates
+    weather_check: WeatherCheck = WeatherCheck.LAX
 
 
 def _number(value: object, field: str, limit: int) -> float:
@@ -51,7 +64,14 @@ def parse_request_coordinates(body: bytes, content_type: str | None) -> RoutesRe
         raise RequestValidationError("Body must be valid UTF-8 JSON.") from exc
     if not isinstance(payload, dict):
         raise RequestValidationError("Body must be a JSON object.")
+    try:
+        weather_check = WeatherCheck(payload.get("weather_check", "lax"))
+    except ValueError as exc:
+        raise RequestValidationError(
+            "weather_check must be one of: lax, normal, strict."
+        ) from exc
     return RoutesRequest(
         origin=_coordinates(payload.get("origin"), "origin"),
         destination=_coordinates(payload.get("destination"), "destination"),
+        weather_check=weather_check,
     )
