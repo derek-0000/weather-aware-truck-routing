@@ -11,29 +11,13 @@ const HEAT_CORE = 0.35;
 
 type Spot = { position: google.maps.LatLng; radius: number; level: RiskLevel };
 type Circle = { x: number; y: number; r: number; level: RiskLevel };
+type Surface = { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D };
 
-function hexToRgb(hex: string): [number, number, number] {
-  const value = Number.parseInt(hex.slice(1), 16);
-  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+function createSurface(): Surface | null {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  return context && { canvas, context };
 }
-
-const PALETTE = (() => {
-  const stops = RISK_LEVELS.map((_, level) => hexToRgb(RISK_LEVELS[Math.max(level, 1)].color));
-  const palette = new Uint8ClampedArray(256 * 4);
-  for (let value = 0; value < 256; value++) {
-    const position = (value / 255) * MAX_RISK_LEVEL;
-    const lower = Math.floor(position);
-    const upper = Math.min(lower + 1, MAX_RISK_LEVEL);
-    const t = position - lower;
-    for (let channel = 0; channel < 3; channel++) {
-      palette[value * 4 + channel] =
-        stops[lower][channel] + (stops[upper][channel] - stops[lower][channel]) * t;
-    }
-    palette[value * 4 + 3] =
-      (HEAT_OPACITY[lower] + (HEAT_OPACITY[upper] - HEAT_OPACITY[lower]) * t) * 255;
-  }
-  return palette;
-})();
 
 function createSpots(route: Route, spherical: google.maps.GeometryLibrary["spherical"]): Spot[] {
   const positions = route.weatherPoints.map(
@@ -54,37 +38,47 @@ function createSpots(route: Route, spherical: google.maps.GeometryLibrary["spher
   });
 }
 
-function drawHeat(context: CanvasRenderingContext2D, circles: Circle[], width: number, height: number) {
-  const hot = circles.filter(({ level }) => level > 0);
-  if (hot.length === 0) return false;
-  context.globalCompositeOperation = "source-over";
-  context.fillStyle = "#000";
-  context.fillRect(0, 0, width, height);
-  context.globalCompositeOperation = "lighten";
-  for (const { x, y, r, level } of hot) {
-    const value = Math.round((level / MAX_RISK_LEVEL) * 255);
-    const intensity = `rgb(${value}, ${value}, ${value})`;
+function drawSpots(context: CanvasRenderingContext2D, circles: Circle[], color: string) {
+  const fade = `${color}00`;
+  for (const { x, y, r } of circles) {
     const gradient = context.createRadialGradient(x, y, 0, x, y, r);
-    gradient.addColorStop(0, intensity);
-    gradient.addColorStop(HEAT_CORE, intensity);
-    gradient.addColorStop(1, "#000");
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(HEAT_CORE, color);
+    gradient.addColorStop(1, fade);
     context.fillStyle = gradient;
     context.beginPath();
     context.arc(x, y, r, 0, Math.PI * 2);
     context.fill();
   }
-  context.globalCompositeOperation = "source-over";
-  const image = context.getImageData(0, 0, width, height);
-  const { data } = image;
-  for (let index = 0; index < data.length; index += 4) {
-    const offset = data[index] * 4;
-    data[index] = PALETTE[offset];
-    data[index + 1] = PALETTE[offset + 1];
-    data[index + 2] = PALETTE[offset + 2];
-    data[index + 3] = PALETTE[offset + 3];
+}
+
+/**
+ * Each level is drawn opaque on its own layer so overlapping spots merge evenly,
+ * then composited at its heat opacity. Levels run highest first, and every layer
+ * is erased wherever a higher level already covers, so higher severities win.
+ */
+function drawHeat(
+  target: CanvasRenderingContext2D,
+  layer: Surface,
+  coverage: Surface,
+  circles: Circle[],
+  width: number,
+  height: number,
+) {
+  coverage.context.clearRect(0, 0, width, height);
+  for (let level = MAX_RISK_LEVEL; level > 0; level--) {
+    const spots = circles.filter((circle) => circle.level === level);
+    if (spots.length === 0) continue;
+    layer.context.clearRect(0, 0, width, height);
+    layer.context.globalCompositeOperation = "source-over";
+    drawSpots(layer.context, spots, RISK_LEVELS[level].color);
+    layer.context.globalCompositeOperation = "destination-out";
+    layer.context.drawImage(coverage.canvas, 0, 0);
+    target.globalAlpha = HEAT_OPACITY[level];
+    target.drawImage(layer.canvas, 0, 0);
+    coverage.context.drawImage(layer.canvas, 0, 0);
   }
-  context.putImageData(image, 0, 0);
-  return true;
+  target.globalAlpha = 1;
 }
 
 export function RiskHeatmap({ route }: { route: Route }) {
@@ -96,10 +90,10 @@ export function RiskHeatmap({ route }: { route: Route }) {
     const canvas = document.createElement("canvas");
     canvas.style.position = "absolute";
     canvas.style.pointerEvents = "none";
-    const heat = document.createElement("canvas");
     const context = canvas.getContext("2d");
-    const heatContext = heat.getContext("2d", { willReadFrequently: true });
-    if (!context || !heatContext) return;
+    const layer = createSurface();
+    const coverage = createSurface();
+    if (!context || !layer || !coverage) return;
 
     const { spherical } = geometry;
     const spots = createSpots(route, spherical);
@@ -119,7 +113,7 @@ export function RiskHeatmap({ route }: { route: Route }) {
 
       canvas.style.left = `${offset.x}px`;
       canvas.style.top = `${offset.y}px`;
-      for (const target of [canvas, heat]) {
+      for (const target of [canvas, layer.canvas, coverage.canvas]) {
         if (target.width !== width) target.width = width;
         if (target.height !== height) target.height = height;
       }
@@ -134,7 +128,7 @@ export function RiskHeatmap({ route }: { route: Route }) {
       });
 
       context.clearRect(0, 0, width, height);
-      if (drawHeat(heatContext, circles, width, height)) context.drawImage(heat, 0, 0);
+      drawHeat(context, layer, coverage, circles, width, height);
     };
 
     const schedule = () => {

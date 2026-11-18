@@ -18,11 +18,7 @@ export type WeatherRisk = {
   windLoadAdjusted: boolean
 }
 
-/**
- * Heavier loads are more exposed to wind. Each entry raises the wind level to
- * `level` when the wind is at least `minWindMph` and the load exceeds `minLoadLbs`.
- * (Wind of 55 mph or more is already No travel for any load.)
- */
+
 const WIND_LOAD_MODIFIERS: readonly { minWindMph: number; minLoadLbs: number; level: RiskLevel }[] = [
   { minWindMph: 45, minLoadLbs: 30_000, level: 4 },
   { minWindMph: 35, minLoadLbs: 40_000, level: 3 },
@@ -36,9 +32,7 @@ function windLevelForLoad(windMph: number, loadWeightLbs: number, level: RiskLev
 }
 
 type Scale = {
-  /** Inclusive lower bounds of Moderate, High and Severe. */
   bounds: readonly [number, number, number]
-  /** Lower bound of No travel. */
   noTravel: number
   noTravelInclusive: boolean
 }
