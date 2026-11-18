@@ -9,3 +9,5 @@ export const WEATHER_CHECKS = [
 ] as const
 
 export type WeatherCheck = (typeof WEATHER_CHECKS)[number]['value']
+
+export const MAX_DEPARTURE_DELAY_HOURS = 48

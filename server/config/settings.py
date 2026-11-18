@@ -15,32 +15,33 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env", override=False)
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-hrvnez4l)uo3(qwj(ek#f0)iqyk9sxp1*2vgm&btb+s9m=@)o3"
+IS_VERCEL = os.environ.get("VERCEL") == "1"
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = not IS_VERCEL
 
-ALLOWED_HOSTS = []
+PRODUCTION_SERVER_HOST = "server-eight-sigma-66.vercel.app"
+PRODUCTION_CLIENT_ORIGIN = "https://client-phi-self.vercel.app"
+
+ALLOWED_HOSTS = [PRODUCTION_SERVER_HOST, "localhost", "127.0.0.1", "[::1]"]
+
+CORS_ALLOWED_ORIGINS = [PRODUCTION_CLIENT_ORIGIN]
 
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 
 
 # Application definition
 
-INSTALLED_APPS = ["django.contrib.staticfiles", "api"]
+INSTALLED_APPS = ["django.contrib.staticfiles", "corsheaders", "api"]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",

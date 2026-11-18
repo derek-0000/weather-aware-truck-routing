@@ -1,3 +1,5 @@
+import { assessWeather, type WeatherRisk } from './risk'
+
 const FORECAST_API_URL = 'https://api.open-meteo.com/v1/forecast'
 const BATCH_SIZE = 10
 const CONCURRENCY_RETRIES = 4
@@ -13,6 +15,7 @@ export type Weather = {
   windMph: number
   rainInph: number
   snowInph: number
+  risk: WeatherRisk
 }
 
 export type RouteWeatherRequest = { points: Coordinates[]; durationSeconds: number }
@@ -47,7 +50,7 @@ function nonnegative(value: unknown, multiplier = 1) {
   return number
 }
 
-function parseForecast(payload: unknown, point: ForecastPoint): Weather {
+function parseForecast(payload: unknown, point: ForecastPoint, loadWeightLbs: number): Weather {
   if (!isRecord(payload) || 'error' in payload) {
     throw new Error('Open-Meteo returned an invalid forecast.')
   }
@@ -82,12 +85,17 @@ function parseForecast(payload: unknown, point: ForecastPoint): Weather {
     }
     return nonnegative(data[index], multiplier)
   }
-  return {
-    eta: point.eta.toISOString(),
-    forecastTime: point.forecastTime.toISOString(),
+  const conditions = {
     windMph: value('wind_speed_10m'),
     rainInph: value('rain', 4),
     snowInph: value('snowfall', 4),
+  }
+  return {
+    eta: point.eta.toISOString(),
+    forecastTime: point.forecastTime.toISOString(),
+    ...conditions,
+    // Score each point as soon as its forecast arrives.
+    risk: assessWeather(conditions, loadWeightLbs),
   }
 }
 
@@ -124,7 +132,7 @@ async function get(url: string): Promise<Response> {
   }
 }
 
-async function fetchForecast(point: ForecastPoint): Promise<Weather> {
+async function fetchForecast(point: ForecastPoint, loadWeightLbs: number): Promise<Weather> {
   const forecastMinute = point.forecastTime.toISOString().slice(0, 16)
   const params = new URLSearchParams({
     latitude: String(point.latitude),
@@ -155,13 +163,14 @@ async function fetchForecast(point: ForecastPoint): Promise<Weather> {
   } catch {
     throw new Error('Open-Meteo returned invalid JSON.')
   }
-  return parseForecast(payload, point)
+  return parseForecast(payload, point, loadWeightLbs)
 }
 
-async function fetchInBatches(points: ForecastPoint[]): Promise<Weather[]> {
+async function fetchInBatches(points: ForecastPoint[], loadWeightLbs: number): Promise<Weather[]> {
   const results: Weather[] = []
   for (let start = 0; start < points.length; start += BATCH_SIZE) {
-    results.push(...(await Promise.all(points.slice(start, start + BATCH_SIZE).map(fetchForecast))))
+    const batch = points.slice(start, start + BATCH_SIZE)
+    results.push(...(await Promise.all(batch.map((point) => fetchForecast(point, loadWeightLbs)))))
   }
   return results
 }
@@ -169,9 +178,10 @@ async function fetchInBatches(points: ForecastPoint[]): Promise<Weather[]> {
 export async function fetchRouteWeather(
   routes: RouteWeatherRequest[],
   departureTime: Date,
+  loadWeightLbs: number,
 ): Promise<Weather[][]> {
   const scheduled = routes.map((route) => schedule(route, departureTime))
-  const results = await fetchInBatches(scheduled.flat())
+  const results = await fetchInBatches(scheduled.flat(), loadWeightLbs)
   let next = 0
   return scheduled.map((points) => points.map(() => results[next++]))
 }

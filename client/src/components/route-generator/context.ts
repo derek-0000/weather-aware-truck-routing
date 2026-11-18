@@ -7,11 +7,15 @@ export type RouteGeneratorContextValue = {
   form: RouteGeneratorState['form']
   departureDate: RouteGeneratorState['departureDate']
   departureTime: RouteGeneratorState['departureTime']
+  departureDelayHours: RouteGeneratorState['departureDelayHours']
+  scheduledDeparture: Date | null
   loadWeightLbs: RouteGeneratorState['loadWeightLbs']
   weatherCheck: RouteGeneratorState['weatherCheck']
   dispatch: Dispatch<RouteGeneratorAction>
   mutation: UseMutationResult<Route[], Error, RouteRequest>
   routes: Route[]
+  selectedRouteIndex: number
+  selectRoute: (index: number) => void
   canSubmit: boolean
   submit: () => void
   mapsConfigured: boolean

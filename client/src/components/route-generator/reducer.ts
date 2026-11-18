@@ -1,10 +1,11 @@
 import type { RouteRequest } from '@/lib/routes'
-import type { WeatherCheck } from './constants'
+import { MAX_DEPARTURE_DELAY_HOURS, type WeatherCheck } from './constants'
 
 export type RouteGeneratorState = {
   form: { [Field in keyof Pick<RouteRequest, 'origin' | 'destination'>]: RouteRequest[Field] | null }
   departureDate: Date | undefined
   departureTime: string
+  departureDelayHours: number
   loadWeightLbs: string
   weatherCheck: WeatherCheck
 }
@@ -14,6 +15,7 @@ export type RouteGeneratorAction =
   | { type: 'destinationChanged'; location: RouteRequest['destination'] | null }
   | { type: 'departureDateChanged'; date: Date | undefined }
   | { type: 'departureTimeChanged'; time: string }
+  | { type: 'departureDelayChanged'; hours: number }
   | { type: 'loadWeightChanged'; loadWeightLbs: string }
   | { type: 'weatherCheckChanged'; weatherCheck: WeatherCheck }
 
@@ -24,6 +26,7 @@ export function createInitialRouteGeneratorState(): RouteGeneratorState {
     form: { origin: null, destination: null },
     departureDate: now,
     departureTime: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    departureDelayHours: 0,
     loadWeightLbs: '',
     weatherCheck: 'lax',
   }
@@ -48,6 +51,11 @@ export function routeGeneratorReducer(
       return { ...state, departureDate: action.date }
     case 'departureTimeChanged':
       return { ...state, departureTime: action.time }
+    case 'departureDelayChanged':
+      return {
+        ...state,
+        departureDelayHours: Math.min(Math.max(Math.round(action.hours), 0), MAX_DEPARTURE_DELAY_HOURS),
+      }
     case 'loadWeightChanged':
       return { ...state, loadWeightLbs: action.loadWeightLbs }
     case 'weatherCheckChanged':

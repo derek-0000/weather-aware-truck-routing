@@ -6,6 +6,7 @@ import {
   SearchIcon,
 } from "lucide-react";
 import { cn } from "cn";
+import { addHours } from "date-fns";
 import {
   Fragment,
   useId,
@@ -32,8 +33,13 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { ROUTE_COLORS, WEATHER_CHECKS, type WeatherCheck } from "./constants";
+import {
+  MAX_DEPARTURE_DELAY_HOURS,
+  WEATHER_CHECKS,
+  type WeatherCheck,
+} from "./constants";
 import { useRouteGenerator } from "./context";
 
 export function RouteGeneratorForm() {
@@ -58,7 +64,7 @@ export function RouteGeneratorForm() {
         if (canSubmit) submit();
       }}
     >
-      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[1fr_auto_1fr] mb-2">
+      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[1fr_auto_1fr]">
         <AddressSelect
           label="Origin"
           places={places}
@@ -82,80 +88,56 @@ export function RouteGeneratorForm() {
         className="group/reveal grid grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-snappy data-[open=true]:grid-rows-[1fr] data-[open=true]:duration-500 motion-reduce:transition-none"
       >
         <div className="-mx-1 min-h-0 overflow-hidden px-1 pb-1">
-          <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
-            <div className="flex flex-wrap items-end gap-x-3 gap-y-5">
-              <Reveal delay={60}>
-                <DepartureField />
-              </Reveal>
-              <Reveal delay={110}>
-                <LoadWeightField />
+          <div className="flex flex-col gap-4 pt-2">
+            <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-4">
+                <Reveal delay={60}>
+                  <DepartureField />
+                </Reveal>
+                <Reveal delay={110}>
+                  <LoadWeightField />
+                </Reveal>
+              </div>
+              <Reveal delay={150}>
+                <WeatherCheckField />
               </Reveal>
             </div>
-            <Reveal delay={150}>
-              <WeatherCheckField />
+            <Reveal delay={190}>
+              <DepartureDelayField />
             </Reveal>
+            <Reveal delay={220} className="flex justify-end">
+              <Button type="submit" disabled={!canSubmit}>
+                <SearchIcon data-icon="inline-start" />
+                {mutation.isPending ? "Finding routes…" : "Find Routes"}
+              </Button>
+            </Reveal>
+            {/* The map's loader shows progress visually; this announces it. */}
+            <p role="status" className="sr-only">
+              {mutation.isPending ? "Finding route options…" : ""}
+            </p>
+            {(mutation.isError ||
+              (mutation.isSuccess && routes.length === 0)) && (
+              <div className="space-y-3">
+                {mutation.isError && (
+                  <p role="alert" className="text-sm text-destructive">
+                    {mutation.error.message}
+                  </p>
+                )}
+                {mutation.isSuccess && routes.length === 0 && (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    No routes found between these addresses. Try another origin or
+                    destination.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
-          <Reveal delay={220} className="mt-2 flex justify-end">
-            <Button type="submit" disabled={!canSubmit}>
-              <SearchIcon data-icon="inline-start" />
-              {mutation.isPending ? "Finding routes…" : "Find Routes"}
-            </Button>
-          </Reveal>
-          {(mutation.isPending || mutation.isError || mutation.isSuccess) && (
-            <div className="mt-4 space-y-3">
-              {mutation.isPending && (
-                <p role="status" className="text-sm text-muted-foreground">
-                  Finding route options…
-                </p>
-              )}
-              {mutation.isError && (
-                <p role="alert" className="text-sm text-destructive">
-                  {mutation.error.message}
-                </p>
-              )}
-              {mutation.isSuccess && routes.length === 0 && (
-                <p role="status" className="text-sm text-muted-foreground">
-                  No routes found between these addresses. Try another origin or
-                  destination.
-                </p>
-              )}
-              {routes.length > 0 && (
-                <ul
-                  className="flex flex-wrap gap-4 text-sm"
-                  aria-label="Route options"
-                >
-                  {routes.map((route, index) => (
-                    <li
-                      key={`${index}-${route.encodedPolyline}`}
-                      className="flex items-center gap-2"
-                    >
-                      <span
-                        className="size-3 rounded-full"
-                        style={{
-                          backgroundColor:
-                            ROUTE_COLORS[index % ROUTE_COLORS.length],
-                        }}
-                        aria-hidden="true"
-                      />
-                      <span>
-                        Route {index + 1}:{" "}
-                        {(route.distanceMeters / 1000).toLocaleString(
-                          undefined,
-                          { maximumFractionDigits: 1 },
-                        )}{" "}
-                        km · {Math.ceil(route.durationSeconds / 60)} min
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </form>
   );
 }
+
 
 function Reveal({
   delay,
@@ -238,6 +220,62 @@ function DepartureField() {
   );
 }
 
+const DEPARTURE_TICK_HOURS = [0, 12, 24, 36, 48] as const;
+
+function formatDepartureSlot(date: Date) {
+  return date.toLocaleString(undefined, {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function DepartureDelayField() {
+  const { departureDelayHours, scheduledDeparture, dispatch } =
+    useRouteGenerator();
+  const labelId = useId();
+  const delayedDeparture =
+    scheduledDeparture && addHours(scheduledDeparture, departureDelayHours);
+  const delayLabel =
+    departureDelayHours === 0 ? "On time" : `+${departureDelayHours} h`;
+
+  return (
+    <Field aria-labelledby={labelId}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <FieldTitle id={labelId}>Delay departure</FieldTitle>
+        <span className="text-sm text-muted-foreground tabular-nums">
+          <span className="font-medium text-foreground">{delayLabel}</span>
+          {delayedDeparture && <> · {formatDepartureSlot(delayedDeparture)}</>}
+        </span>
+      </div>
+      <div className="py-1">
+        <Slider
+          aria-labelledby={labelId}
+          min={0}
+          max={MAX_DEPARTURE_DELAY_HOURS}
+          step={1}
+          value={[departureDelayHours]}
+          disabled={!scheduledDeparture}
+          onValueChange={(value) => {
+            const hours = Array.isArray(value) ? value[0] : value;
+            dispatch({ type: "departureDelayChanged", hours });
+          }}
+        />
+      </div>
+      <div
+        aria-hidden="true"
+        className="flex justify-between text-xs text-muted-foreground tabular-nums"
+      >
+        {DEPARTURE_TICK_HOURS.map((hours) => (
+          <span key={hours}>
+            {hours === 0 ? "Departure" : `+${hours} h`}
+          </span>
+        ))}
+      </div>
+    </Field>
+  );
+}
+
 function LoadWeightField() {
   const { loadWeightLbs, dispatch } = useRouteGenerator();
   const id = useId();
@@ -250,7 +288,8 @@ function LoadWeightField() {
           id={id}
           type="number"
           inputMode="numeric"
-          min={0}
+          required
+          min={1}
           step={1}
           placeholder="40000"
           value={loadWeightLbs}

@@ -1,11 +1,18 @@
 import type { WeatherCheck } from '@/components/route-generator/constants'
+import { worstRisk, type RiskLevel } from './risk'
+import { evaluateRoute, rankRoutes, type RouteEvaluation } from './route-evaluator'
 import { fetchRouteWeather, type Coordinates, type Weather } from "./weather";
+
+const PRODUCTION_API_BASE_URL = 'https://server-eight-sigma-66.vercel.app'
+
+const API_BASE_URL = import.meta.env.PROD ? PRODUCTION_API_BASE_URL : ''
 
 export type RouteRequest = {
   origin: google.maps.places.Place
   destination: google.maps.places.Place
   weatherCheck: WeatherCheck
   departureTime: Date
+  loadWeightLbs: number
 }
 
 export type WeatherPoint = Coordinates & { weather: Weather };
@@ -15,9 +22,12 @@ export type Route = {
   durationSeconds: number;
   encodedPolyline: string;
   weatherPoints: WeatherPoint[];
+  riskLevel: RiskLevel;
+  evaluation: RouteEvaluation;
+  recommended: boolean;
 };
 
-type RouteGeometry = Omit<Route, "weatherPoints"> & {
+type RouteGeometry = Pick<Route, "distanceMeters" | "durationSeconds" | "encodedPolyline"> & {
   weatherPoints: Coordinates[];
 };
 
@@ -46,7 +56,7 @@ async function requestRouteGeometries({
   const destinationLocation = destination.location.toJSON()
   let response: Response
   try {
-    response = await fetch('/api/get_routes', {
+    response = await fetch(`${API_BASE_URL}/api/get_routes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -82,6 +92,7 @@ async function requestRouteGeometries({
   }))
 }
 
+/** Routes come back ranked best first, so the first route is the recommended one when any is. */
 export async function requestRoutes(request: RouteRequest): Promise<Route[]> {
   const routes = await requestRouteGeometries(request);
   const weather = await fetchRouteWeather(
@@ -90,12 +101,22 @@ export async function requestRoutes(request: RouteRequest): Promise<Route[]> {
       durationSeconds,
     })),
     request.departureTime,
+    request.loadWeightLbs,
   );
-  return routes.map((route, routeIndex) => ({
-    ...route,
-    weatherPoints: route.weatherPoints.map((point, pointIndex) => ({
-      ...point,
-      weather: weather[routeIndex][pointIndex],
-    })),
-  }));
+  return rankRoutes(
+    routes.map((route, routeIndex) => {
+      const forecastRoute = {
+        ...route,
+        weatherPoints: route.weatherPoints.map((point, pointIndex) => ({
+          ...point,
+          weather: weather[routeIndex][pointIndex],
+        })),
+      };
+      return {
+        ...forecastRoute,
+        riskLevel: worstRisk(forecastRoute.weatherPoints.map(({ weather }) => weather.risk.level)),
+        evaluation: evaluateRoute(forecastRoute),
+      };
+    }),
+  );
 }

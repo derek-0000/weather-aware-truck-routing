@@ -11,6 +11,7 @@ import { format } from "date-fns";
 import {
   ClockIcon,
   CloudRainIcon,
+  SearchIcon,
   SnowflakeIcon,
   WindIcon,
 } from "lucide-react";
@@ -20,6 +21,10 @@ import { Button } from "@/components/ui/button";
 import type { Route } from "@/lib/routes";
 import { INITIAL_CENTER, INITIAL_ZOOM, ROUTE_COLORS } from "./constants";
 import { useRouteGenerator } from "./context";
+import { PixelGridLoader } from "./pixel-grid-loader";
+import { RiskBadge } from "./risk-badge";
+import { RiskHeatmap } from "./risk-heatmap";
+import { RouteOptions } from "./route-options";
 
 function ResetView() {
   const map = useMap();
@@ -37,9 +42,24 @@ function ResetView() {
   );
 }
 
-function RoutePolylines({ routes }: { routes: Route[] }) {
+function RoutePolylines({
+  routes,
+  selectedIndex,
+  onSelect,
+  onFitted,
+}: {
+  routes: Route[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+  onFitted: () => void;
+}) {
   const map = useMap();
   const geometry = useMapsLibrary("geometry");
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+  const onFittedRef = useRef(onFitted);
+  useEffect(() => {
+    onFittedRef.current = onFitted;
+  });
 
   useEffect(() => {
     if (!map || !geometry || routes.length === 0) return;
@@ -47,18 +67,41 @@ function RoutePolylines({ routes }: { routes: Route[] }) {
     const polylines = routes.map((route, index) => {
       const path = geometry.encoding.decodePath(route.encodedPolyline);
       path.forEach((point) => bounds.extend(point));
-      return new google.maps.Polyline({
+      const polyline = new google.maps.Polyline({
         map,
         path,
         strokeColor: ROUTE_COLORS[index % ROUTE_COLORS.length],
-        strokeOpacity: 0.85,
-        strokeWeight: index === 0 ? 6 : 4,
-        zIndex: routes.length - index,
+        clickable: true,
+      });
+      polyline.addListener("click", () => onSelect(index));
+      return polyline;
+    });
+    polylinesRef.current = polylines;
+    const idle = google.maps.event.addListenerOnce(map, "idle", () =>
+      onFittedRef.current(),
+    );
+    if (!bounds.isEmpty()) map.fitBounds(bounds, 60);
+    return () => {
+      idle.remove();
+      polylinesRef.current = [];
+      polylines.forEach((polyline) => {
+        google.maps.event.clearInstanceListeners(polyline);
+        polyline.setMap(null);
+      });
+    };
+  }, [map, geometry, routes, onSelect]);
+
+  // Restyle without recreating the polylines, so selecting a route keeps the current view.
+  useEffect(() => {
+    polylinesRef.current.forEach((polyline, index) => {
+      const selected = index === selectedIndex;
+      polyline.setOptions({
+        strokeOpacity: selected ? 0.95 : 0.45,
+        strokeWeight: selected ? 6 : 4,
+        zIndex: selected ? routes.length + 1 : routes.length - index,
       });
     });
-    if (!bounds.isEmpty()) map.fitBounds(bounds, 60);
-    return () => polylines.forEach((polyline) => polyline.setMap(null));
-  }, [map, geometry, routes]);
+  }, [map, geometry, routes, selectedIndex]);
   return null;
 }
 
@@ -160,7 +203,8 @@ function WeatherPointCard({
   pointCount: number;
   color: string;
 }) {
-  const { eta, forecastTime, windMph, rainInph, snowInph } = point.weather;
+  const { eta, forecastTime, windMph, rainInph, snowInph, risk } =
+    point.weather;
   const label =
     pointIndex === 0
       ? "Start"
@@ -168,15 +212,30 @@ function WeatherPointCard({
         ? "Destination"
         : `Checkpoint ${pointIndex} of ${pointCount - 2}`;
   const rows = [
-    { icon: WindIcon, label: "Wind", value: `${windMph.toFixed(1)} mph` },
-    { icon: CloudRainIcon, label: "Rain", value: formatRate(rainInph) },
-    { icon: SnowflakeIcon, label: "Snow", value: formatRate(snowInph) },
+    {
+      icon: WindIcon,
+      label: "Wind",
+      value: `${windMph.toFixed(1)} mph`,
+      level: risk.wind,
+    },
+    {
+      icon: CloudRainIcon,
+      label: "Rain",
+      value: formatRate(rainInph),
+      level: risk.rain,
+    },
+    {
+      icon: SnowflakeIcon,
+      label: "Snow",
+      value: formatRate(snowInph),
+      level: risk.snow,
+    },
   ];
 
   return (
     <div
       role="tooltip"
-      className="absolute left-0 w-56 rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10"
+      className="absolute left-0 w-72 rounded-lg bg-popover p-3 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10"
     >
       <div className="flex items-center gap-2">
         <span
@@ -191,6 +250,7 @@ function WeatherPointCard({
             · Route {routeIndex + 1}
           </span>
         </p>
+        <RiskBadge level={risk.level} className="ml-auto" />
       </div>
       <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
         <ClockIcon aria-hidden className="size-3.5" />
@@ -199,16 +259,24 @@ function WeatherPointCard({
         </span>
       </p>
       <dl className="mt-3 space-y-1.5">
-        {rows.map(({ icon: Icon, label, value }) => (
+        {rows.map(({ icon: Icon, label, value, level }) => (
           <div key={label} className="flex items-center justify-between gap-3">
             <dt className="flex items-center gap-2 text-muted-foreground">
               <Icon aria-hidden className="size-4" />
               {label}
             </dt>
-            <dd className="font-medium tabular-nums">{value}</dd>
+            <dd className="flex items-center gap-2">
+              <span className="font-medium tabular-nums">{value}</span>
+              <RiskBadge level={level} />
+            </dd>
           </div>
         ))}
       </dl>
+      {risk.windLoadAdjusted && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Wind level raised for this load weight.
+        </p>
+      )}
       <p className="mt-3 border-t border-border pt-2 text-xs text-muted-foreground">
         Forecast for{" "}
         <time dateTime={forecastTime}>
@@ -219,7 +287,13 @@ function WeatherPointCard({
   );
 }
 
-function WeatherPoints({ routes }: { routes: Route[] }) {
+function WeatherPoints({
+  routes,
+  selectedIndex,
+}: {
+  routes: Route[];
+  selectedIndex: number;
+}) {
   const map = useMap();
   const [hovered, setHovered] = useState<PointSelection | null>(null);
   const [pinned, setPinned] = useState<PointSelection | null>(null);
@@ -245,7 +319,10 @@ function WeatherPoints({ routes }: { routes: Route[] }) {
           icon,
           optimized: true,
           cursor: "pointer",
-          zIndex: routes.length - routeIndex,
+          zIndex:
+            routeIndex === selectedIndex
+              ? routes.length + 1
+              : routes.length - routeIndex,
         });
         const selection = { routes, routeIndex, pointIndex };
         marker.addListener("mouseover", () => setHovered(selection));
@@ -278,7 +355,7 @@ function WeatherPoints({ routes }: { routes: Route[] }) {
       mapClick.remove();
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [map, routes]);
+  }, [map, routes, selectedIndex]);
 
   const active = [pinned, hovered].find((selection) => selection?.routes === routes);
   const route = active ? routes[active.routeIndex] : undefined;
@@ -298,8 +375,10 @@ function WeatherPoints({ routes }: { routes: Route[] }) {
   );
 }
 
-function MapContent() {
-  const { routes, mapsConfigured } = useRouteGenerator();
+function MapContent({ onReady }: { onReady: () => void }) {
+  const { routes, selectedRouteIndex, selectRoute, mapsConfigured } =
+    useRouteGenerator();
+  const selectedRoute = routes[selectedRouteIndex];
   const status = useApiLoadingStatus();
   if (!mapsConfigured) {
     return (
@@ -358,8 +437,14 @@ function MapContent() {
       mapTypeControl={false}
       fullscreenControl={false}
     >
-      <RoutePolylines routes={routes} />
-      <WeatherPoints routes={routes} />
+      {selectedRoute && <RiskHeatmap route={selectedRoute} />}
+      <RoutePolylines
+        routes={routes}
+        selectedIndex={selectedRouteIndex}
+        onSelect={selectRoute}
+        onFitted={onReady}
+      />
+      <WeatherPoints routes={routes} selectedIndex={selectedRouteIndex} />
       <MapControl position={ControlPosition.TOP_RIGHT}>
         <ResetView />
       </MapControl>
@@ -367,14 +452,65 @@ function MapContent() {
   );
 }
 
-export function RouteGeneratorMap() {
-  const { routes } = useRouteGenerator();
+const MAP_READY_TIMEOUT_MS = 1500;
 
-  if (routes.length > 0) {
-    return (
-      <div className="h-100 overflow-hidden rounded-xl">
-        <MapContent />
-      </div>
+function EmptyState() {
+  return (
+    <div className="flex h-120 animate-in flex-col items-center justify-center gap-3 rounded-xl border border-border bg-card text-center duration-300 ease-snappy fade-in-0 zoom-in-[0.98]">
+      <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <SearchIcon aria-hidden className="size-5" />
+      </span>
+      <p className="text-sm text-muted-foreground">
+        Query a route to see the map
+      </p>
+    </div>
+  );
+}
+
+
+export function RouteGeneratorMap() {
+  const { routes, mutation, mapsConfigured } = useRouteGenerator();
+  const [readyRoutes, setReadyRoutes] = useState<Route[] | null>(null);
+  const [loaderShown, setLoaderShown] = useState(false);
+  const hasRoutes = routes.length > 0;
+  const covering =
+    mutation.isPending ||
+    (hasRoutes && mapsConfigured && readyRoutes !== routes);
+  if (covering && !loaderShown) setLoaderShown(true);
+
+  useEffect(() => {
+    if (!hasRoutes) return;
+    const timeout = setTimeout(
+      () => setReadyRoutes(routes),
+      MAP_READY_TIMEOUT_MS,
     );
-  }
+    return () => clearTimeout(timeout);
+  }, [hasRoutes, routes]);
+
+  return (
+    <section
+      aria-label="Route results"
+      aria-busy={covering}
+      className="relative"
+    >
+      {hasRoutes ? (
+        <div className="flex flex-col gap-4 sm:h-120">
+          <RouteOptions />
+          <div className="h-100 overflow-hidden rounded-xl sm:h-auto sm:min-h-0 sm:flex-1">
+            <MapContent onReady={() => setReadyRoutes(routes)} />
+          </div>
+        </div>
+      ) : (
+        <EmptyState />
+      )}
+      {loaderShown && (
+        <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl">
+          <PixelGridLoader
+            active={covering}
+            onExited={() => setLoaderShown(false)}
+          />
+        </div>
+      )}
+    </section>
+  );
 }
