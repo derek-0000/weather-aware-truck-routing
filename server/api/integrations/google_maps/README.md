@@ -75,18 +75,9 @@ than one interval. A destination that falls on an interval appears only once;
 a zero-length route needs only one coordinate. For an exactly 200-mile route,
 `lax` returns five points at 0, 50, 100, 150, and 200 miles. These are collection
 locations for weather checks; this endpoint does not fetch weather forecasts.
-The client requests one Open-Meteo forecast per point from the browser (see
-`client/src/lib/weather.ts`), so each user spends their own per-IP quota.
-
-Every point costs one Open-Meteo call, and the free tier allows 600 calls per
-minute, so the total across all routes, including alternatives, is capped at 600
-points. If the requested level exceeds the cap, the endpoint falls back to the
-next sparser level: `strict` to `normal`, then `normal` to `lax`. If even `lax`
-exceeds it, every route returns `"weather_points": []`, and the client makes no
-weather requests. Whenever a sparser level is used instead, the response includes
-a top-level `"strictness_demoted_to"` with that level (`"normal"` or `"lax"`). The
-key is absent when the requested level was used, and when weather checks were
-skipped, since the empty `weather_points` already show that.
+The client requests one Open-Meteo forecast per point from the browser, so the
+number of points is capped, with a fallback to sparser levels, as described in
+`../open_meteo/README.md`.
 
 No route found returns `200` with `{"routes": []}`. Invalid input returns `400`,
 unsupported content type `415`, missing server key `503`, Google timeout `504`,
@@ -97,7 +88,8 @@ Unsupported HTTP methods return Django's `405` response.
 `validators.py` parses incoming JSON into coordinate/request dataclasses.
 `builders.py` builds Google headers and body. `client.py` owns the HTTP call,
 timeouts, errors, and response validation. `geometry.py` decodes polylines and
-collects weather points, including the fallback. The view only connects these
+samples points along them; `open_meteo/weather_points.py` applies the weather
+point cap and fallback. The view only connects these
 pieces to Django's request and JSON response.
 
 References: [Compute Routes](https://developers.google.com/maps/documentation/routes/compute_route_directions)

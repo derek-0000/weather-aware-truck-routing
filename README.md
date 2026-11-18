@@ -2,9 +2,8 @@
 
 ## Architecture
 
-Client (React) -> Server (Django) -> Google Maps API
+Client (React) -> Server (Django) -> Google Maps API, Open-Meteo API
 
-Client (React) -> Open-Meteo API
 
 ### Client
 

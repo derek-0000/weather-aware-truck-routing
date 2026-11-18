@@ -8,10 +8,12 @@ from .integrations.google_maps.validators import (
     RequestValidationError,
     parse_request_coordinates,
 )
+from .ratelimit import rate_limit
 
 
 @require_POST
 @csrf_exempt
+@rate_limit("get_routes")
 def get_routes(request: HttpRequest) -> JsonResponse:
     try:
         coordinates = parse_request_coordinates(request.body, request.content_type)

@@ -35,6 +35,15 @@ CORS_ALLOWED_ORIGINS = [PRODUCTION_CLIENT_ORIGIN]
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 
 
+
+
+TRUST_FORWARDED_FOR = IS_VERCEL
+
+RATE_LIMITS = {
+    "get_routes": [(10, 60), (100, 60 * 60)],
+}
+
+
 # Application definition
 
 INSTALLED_APPS = ["django.contrib.staticfiles", "corsheaders", "api"]

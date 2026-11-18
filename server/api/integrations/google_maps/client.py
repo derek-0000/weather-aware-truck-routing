@@ -2,8 +2,8 @@ from typing import Any, NotRequired, TypedDict
 
 import requests
 
+from ..open_meteo.weather_points import collect_weather_points
 from .builders import ROUTES_API_URL, build_routes_body, build_routes_headers
-from .geometry import collect_weather_points
 from .validators import RoutesRequest, WeatherCheck
 
 

@@ -3,11 +3,9 @@
 import math
 from collections.abc import Sequence
 
-from .validators import Coordinates, WeatherCheck
+from .validators import Coordinates
 
 EARTH_RADIUS_METERS = 6_371_008.8
-# Open-Meteo's free tier allows 600 calls per minute per IP address.
-MAX_WEATHER_POINTS = 600
 
 
 def decode_polyline(encoded: str) -> list[Coordinates]:
@@ -101,21 +99,3 @@ def sample_path(points: Sequence[Coordinates], interval: float) -> list[Coordina
         samples.append(points[-1])
     return samples
 
-
-def collect_weather_points(
-    encoded_polylines: Sequence[str], weather_check: WeatherCheck
-) -> tuple[WeatherCheck | None, list[list[Coordinates]]]:
-    """Sample every route, falling back to sparser checks when there are too many points.
-
-    The client requests one Open-Meteo forecast per point, and every point costs
-    one call against the free per-minute limit, so the limit applies to the total
-    across all routes. Returns the level actually used with the samples. If even
-    `lax` exceeds the limit, the level is None, every route gets no points, and
-    the client skips the weather requests.
-    """
-    paths = [decode_polyline(encoded) for encoded in encoded_polylines]
-    for level in weather_check.fallbacks:
-        samples = [sample_path(path, level.interval_meters) for path in paths]
-        if sum(len(route_samples) for route_samples in samples) <= MAX_WEATHER_POINTS:
-            return level, samples
-    return None, [[] for _ in paths]
